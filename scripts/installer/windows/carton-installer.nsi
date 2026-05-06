@@ -24,6 +24,12 @@
 !ifndef APPDATA_DIR_NAME
   !define APPDATA_DIR_NAME "${APP_NAME}"
 !endif
+!ifndef APP_PUBLISHER
+  !define APP_PUBLISHER "${APP_NAME}"
+!endif
+!ifndef PRODUCT_REG_KEY
+  !define PRODUCT_REG_KEY "Software\${APP_ID}"
+!endif
 !ifndef INSTALL_DIR
   !define INSTALL_DIR "$LOCALAPPDATA\Programs\${APP_NAME}"
 !endif
@@ -39,7 +45,6 @@ ShowInstDetails show
 ShowUninstDetails show
 
 !define UNINSTALL_REG_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
-!define PRODUCT_REG_KEY "Software\${APP_ID}"
 
 Var DeleteAppDataCheckbox
 Var DeleteAppDataCheckboxState
@@ -106,7 +111,7 @@ Section "Install"
   WriteRegStr HKCU "${PRODUCT_REG_KEY}" "" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "DisplayVersion" "${APP_VERSION}"
-  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "Publisher" "${APP_NAME}"
+  WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "Publisher" "${APP_PUBLISHER}"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_REG_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegDWORD HKCU "${UNINSTALL_REG_KEY}" "NoModify" 1

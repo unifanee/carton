@@ -24,6 +24,12 @@ param(
     [string]$AppDataDirName,
 
     [Parameter(Mandatory = $false)]
+    [string]$Publisher,
+
+    [Parameter(Mandatory = $false)]
+    [string]$ProductRegKey,
+
+    [Parameter(Mandatory = $false)]
     [string]$InstallDir
 )
 
@@ -79,6 +85,14 @@ $defines = @(
 
 if (-not [string]::IsNullOrWhiteSpace($AppDataDirName)) {
     $defines += "/DAPPDATA_DIR_NAME=$AppDataDirName"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($Publisher)) {
+    $defines += "/DAPP_PUBLISHER=$Publisher"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ProductRegKey)) {
+    $defines += "/DPRODUCT_REG_KEY=$ProductRegKey"
 }
 
 if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
