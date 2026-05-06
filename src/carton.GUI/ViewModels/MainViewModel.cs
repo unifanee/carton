@@ -212,7 +212,7 @@ public partial class MainViewModel : ViewModelBase
 
         DashboardViewModel = new DashboardViewModel(_singBoxManager, _kernelManager, _profileManager, _configManager, _preferencesService, ShowToast, _logStore.AddLog);
         _lazyGroupsViewModel = new Lazy<GroupsViewModel>(() => new GroupsViewModel(_singBoxManager, _preferencesService));
-        _appUpdateService = new AppUpdateService("https://github.com/821869798/carton", null, _logStore.AddLog);
+        _appUpdateService = new AppUpdateService("https://github.com/unifanee/carton", null, _logStore.AddLog);
         _appUpdateCoordinator = new AppUpdateCoordinator(_appUpdateService, _localizationService);
         _appUpdateCoordinator.PropertyChanged += OnAppUpdateCoordinatorPropertyChanged;
         _transientPageUnloadTimer = new DispatcherTimer
