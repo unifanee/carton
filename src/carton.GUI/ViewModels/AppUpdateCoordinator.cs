@@ -606,27 +606,12 @@ public partial class AppUpdateCoordinator : ObservableObject
 
     private long ResolveExpectedDownloadSize(AppUpdateResult update)
     {
-        if (update.UpdateInfo == null)
+        if (_appUpdateService != null)
         {
-            return update.ReleaseInfo.Assets.FirstOrDefault()?.Size ?? 0;
+            return _appUpdateService.ResolveExpectedDownloadSize(update);
         }
 
-        var deltaPackages = update.UpdateInfo.DeltasToTarget;
-        if (deltaPackages is { Length: > 0 })
-        {
-            long deltaBytes = 0;
-            foreach (var asset in deltaPackages)
-            {
-                deltaBytes += Math.Max(0, asset?.Size ?? 0);
-            }
-
-            if (deltaBytes > 0)
-            {
-                return deltaBytes;
-            }
-        }
-
-        return Math.Max(0, update.UpdateInfo.TargetFullRelease?.Size ?? 0);
+        return 0;
     }
 
     private string GetString(string key, string fallback)

@@ -36,6 +36,8 @@ public interface IAppUpdateService
 
     string ReleasesPageUrl { get; }
 
+    long ResolveExpectedDownloadSize(AppUpdateResult update);
+
     Task<AppUpdateResult?> CheckForUpdatesAsync(
         string channel,
         CancellationToken cancellationToken = default);
@@ -250,7 +252,7 @@ public sealed class AppUpdateService : IAppUpdateService
             return;
         }
 
-        var totalBytes = ResolveDownloadSize(update);
+        var totalBytes = ResolveExpectedDownloadSize(update);
         var manager = CreateManager(channel, update.ReleaseInfo);
         try
         {
@@ -366,7 +368,7 @@ public sealed class AppUpdateService : IAppUpdateService
         _log?.Invoke(message);
     }
 
-    private static long ResolveDownloadSize(AppUpdateResult update)
+    public long ResolveExpectedDownloadSize(AppUpdateResult update)
     {
         if (update.UpdateInfo == null)
         {
