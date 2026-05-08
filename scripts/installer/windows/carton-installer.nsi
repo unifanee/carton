@@ -64,6 +64,12 @@ LangString DeleteAppDataText 1033 "Delete local app data (AppData\\Carton)"
 LangString DeleteAppDataText 2052 "删除本地应用数据 (AppData\\Carton)"
 LangString LaunchAfterInstallText 1033 "Launch ${APP_NAME} after setup"
 LangString LaunchAfterInstallText 2052 "安装完成后启动 ${APP_NAME}"
+LangString UpgradePageTitle 1033 "Upgrade ${APP_NAME}"
+LangString UpgradePageTitle 2052 "升级 ${APP_NAME}"
+LangString UpgradePageMessage 1033 "An existing installation was found. Setup will upgrade ${APP_NAME} in the existing location."
+LangString UpgradePageMessage 2052 "检测到已安装的 ${APP_NAME}。安装程序将使用原安装位置进行升级。"
+LangString UpgradePagePathLabel 1033 "Install location:"
+LangString UpgradePagePathLabel 2052 "安装位置："
 LangString InstallDirNotWritableText 1033 "The selected install directory is not writable by the current user.$\r$\n$\r$\nThis installer runs without administrator privileges. Please choose a user-writable directory, such as your local AppData Programs folder."
 LangString InstallDirNotWritableText 2052 "当前用户无法写入所选安装目录。$\r$\n$\r$\n此安装器不会请求管理员权限。请选择当前用户可写的目录，例如本地 AppData Programs 目录。"
 LangString RunningDuringInstallText 1033 "${APP_NAME} is currently running.$\r$\n$\r$\nYes: close it automatically and continue.$\r$\nNo: retry after closing it manually.$\r$\nCancel: abort setup."
@@ -72,6 +78,8 @@ LangString RunningDuringUninstallText 1033 "${APP_NAME} is currently running.$\r
 LangString RunningDuringUninstallText 2052 "${APP_NAME} 正在运行。$\r$\n$\r$\n是：自动关闭并继续卸载。$\r$\n否：手动关闭后重试。$\r$\n取消：终止卸载。"
 
 !insertmacro MUI_PAGE_WELCOME
+Page custom UpgradePageShow UpgradePageLeave
+!define MUI_PAGE_CUSTOMFUNCTION_PRE DirectoryPre
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE InstallDirLeave
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -187,6 +195,37 @@ Function RunExistingUninstaller
   ${Else}
     IfFileExists "$INSTDIR\uninstall.exe" 0 +2
       ExecWait '"$INSTDIR\uninstall.exe" /S _?=$INSTDIR'
+  ${EndIf}
+FunctionEnd
+
+Function UpgradePageShow
+  ${If} $ExistingInstallDir == ""
+    Abort
+  ${EndIf}
+
+  !insertmacro MUI_HEADER_TEXT "$(UpgradePageTitle)" "$(UpgradePageMessage)"
+  nsDialogs::Create 1018
+  Pop $0
+
+  ${NSD_CreateLabel} 0 0 100% 28u "$(UpgradePageMessage)"
+  Pop $1
+
+  ${NSD_CreateLabel} 0 46u 100% 12u "$(UpgradePagePathLabel)"
+  Pop $1
+
+  ${NSD_CreateText} 0 62u 100% 13u "$ExistingInstallDir"
+  Pop $1
+  EnableWindow $1 0
+
+  nsDialogs::Show
+FunctionEnd
+
+Function UpgradePageLeave
+FunctionEnd
+
+Function DirectoryPre
+  ${If} $ExistingInstallDir != ""
+    Abort
   ${EndIf}
 FunctionEnd
 
