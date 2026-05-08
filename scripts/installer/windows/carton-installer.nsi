@@ -39,6 +39,8 @@
 
 Unicode True
 Name "${APP_NAME}"
+Caption "${APP_NAME} ${APP_VERSION}"
+UninstallCaption "${APP_NAME} ${APP_VERSION}"
 OutFile "${OUTPUT_EXE}"
 !if "${APP_ICON}" != ""
   Icon "${APP_ICON}"
@@ -64,6 +66,10 @@ LangString DeleteAppDataText 1033 "Delete local app data (AppData\\Carton)"
 LangString DeleteAppDataText 2052 "删除本地应用数据 (AppData\\Carton)"
 LangString LaunchAfterInstallText 1033 "Launch ${APP_NAME} after setup"
 LangString LaunchAfterInstallText 2052 "安装完成后启动 ${APP_NAME}"
+LangString WelcomePageTitle 1033 "Welcome to ${APP_NAME} ${APP_VERSION} Setup"
+LangString WelcomePageTitle 2052 "欢迎使用 ${APP_NAME} ${APP_VERSION} 安装向导"
+LangString WelcomePageText 1033 "Setup will install ${APP_NAME} ${APP_VERSION} on your computer.$\r$\n$\r$\nClick Next to continue."
+LangString WelcomePageText 2052 "安装程序将把 ${APP_NAME} ${APP_VERSION} 安装到你的电脑。$\r$\n$\r$\n点击下一步继续。"
 LangString UpgradePageTitle 1033 "Upgrade ${APP_NAME}"
 LangString UpgradePageTitle 2052 "升级 ${APP_NAME}"
 LangString UpgradePageMessage 1033 "An existing installation was found. Setup will upgrade ${APP_NAME} in the existing location."
@@ -77,6 +83,8 @@ LangString RunningDuringInstallText 2052 "${APP_NAME} 正在运行。$\r$\n$\r$\
 LangString RunningDuringUninstallText 1033 "${APP_NAME} is currently running.$\r$\n$\r$\nYes: close it automatically and continue uninstall.$\r$\nNo: retry after closing it manually.$\r$\nCancel: abort uninstall."
 LangString RunningDuringUninstallText 2052 "${APP_NAME} 正在运行。$\r$\n$\r$\n是：自动关闭并继续卸载。$\r$\n否：手动关闭后重试。$\r$\n取消：终止卸载。"
 
+!define MUI_WELCOMEPAGE_TITLE "$(WelcomePageTitle)"
+!define MUI_WELCOMEPAGE_TEXT "$(WelcomePageText)"
 !insertmacro MUI_PAGE_WELCOME
 Page custom UpgradePageShow UpgradePageLeave
 !define MUI_PAGE_CUSTOMFUNCTION_PRE DirectoryPre
