@@ -298,7 +298,8 @@ jobs:
             -OutputFileName "$env:APP_NAME-$env:VERSION-${{ matrix.rid }}-Setup.exe" `
             -AppDataDirName "Carton" `
             -Publisher "Unifan" `
-            -ProductRegKey "Software\Unifan\Carton"
+            -ProductRegKey "Software\Unifan\Carton" `
+            -IconPath "${{ matrix.icon }}"
 
       - name: Prepare release assets (Linux)
         if: runner.os == 'Linux'

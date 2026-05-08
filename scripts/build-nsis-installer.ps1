@@ -30,6 +30,9 @@ param(
     [string]$ProductRegKey,
 
     [Parameter(Mandatory = $false)]
+    [string]$IconPath,
+
+    [Parameter(Mandatory = $false)]
     [string]$InstallDir
 )
 
@@ -93,6 +96,11 @@ if (-not [string]::IsNullOrWhiteSpace($Publisher)) {
 
 if (-not [string]::IsNullOrWhiteSpace($ProductRegKey)) {
     $defines += "/DPRODUCT_REG_KEY=$ProductRegKey"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($IconPath)) {
+    $iconPathResolved = (Resolve-Path $IconPath).Path
+    $defines += "/DAPP_ICON=$iconPathResolved"
 }
 
 if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {

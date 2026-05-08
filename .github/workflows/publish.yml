@@ -286,7 +286,8 @@ jobs:
             -OutputFileName "$env:APP_NAME-$env:VERSION-${{ matrix.rid }}-Setup.exe" `
             -AppDataDirName "Carton" `
             -Publisher "Unifan" `
-            -ProductRegKey "Software\Unifan\Carton"
+            -ProductRegKey "Software\Unifan\Carton" `
+            -IconPath "${{ matrix.icon }}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6

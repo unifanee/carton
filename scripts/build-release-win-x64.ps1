@@ -129,7 +129,8 @@ $renamedSetupName = "$appName-$Version-$rid-Setup.exe"
     -OutputFileName $renamedSetupName `
     -AppDataDirName "Carton" `
     -Publisher "Unifan" `
-    -ProductRegKey "Software\Unifan\Carton"
+    -ProductRegKey "Software\Unifan\Carton" `
+    -IconPath "$repoRoot\src\carton.GUI\Assets\carton_icon.ico"
 
 Set-Content -Path "$packDir\channel.txt" -Value $Channel
 
