@@ -69,10 +69,186 @@
       <Setter Property="Background" Value="Transparent"/>
       <Setter Property="BorderThickness" Value="0"/>
     </Style>
+
+    <Styles>
+      <Styles.Resources>
+        <ControlTheme x:Key="SettingsTabStripTheme" TargetType="TabStrip">
+      <Setter Property="MinHeight" Value="32"/>
+      <Setter Property="CornerRadius" Value="{DynamicResource ControlCornerRadius}"/>
+      <Setter Property="Background" Value="{DynamicResource ControlAltFillColorSecondaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="HorizontalAlignment" Value="Left"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="IsTabStop" Value="False"/>
+      <Setter Property="KeyboardNavigation.TabNavigation" Value="Once"/>
+      <Setter Property="Padding" Value="-1"/>
+      <Setter Property="ItemsPanel">
+        <ItemsPanelTemplate>
+          <WrapPanel/>
+        </ItemsPanelTemplate>
+      </Setter>
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Height="{TemplateBinding Height}"
+                  VerticalAlignment="Stretch"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}">
+            <ItemsPresenter Margin="{TemplateBinding Padding}"
+                            VerticalAlignment="Stretch"
+                            ItemsPanel="{TemplateBinding ItemsPanel}"/>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </ControlTheme>
+
+    <ControlTheme x:Key="SettingsTabItemTheme" TargetType="TabStripItem">
+      <Setter Property="CornerRadius" Value="{DynamicResource ControlCornerRadius}"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="FontFamily" Value="{DynamicResource ContentControlThemeFontFamily}"/>
+      <Setter Property="Background" Value="{DynamicResource ControlFillColorTransparentBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlFillColorTransparentBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+      <Setter Property="FontWeight" Value="Normal"/>
+      <Setter Property="Height" Value="32"/>
+      <Setter Property="MinWidth" Value="32"/>
+      <Setter Property="FontSize" Value="{DynamicResource ControlContentThemeFontSize}"/>
+      <Setter Property="VerticalAlignment" Value="Stretch"/>
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="Root"
+                  VerticalAlignment="{TemplateBinding VerticalAlignment}"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="1"
+                  CornerRadius="{TemplateBinding CornerRadius}"
+                  TemplatedControl.IsTemplateFocusTarget="True">
+            <Border.Transitions>
+              <Transitions>
+                <BrushTransition Property="Background" Duration="00:00:00.083"/>
+              </Transitions>
+            </Border.Transitions>
+
+            <Panel>
+              <Border Name="Hover"
+                      Margin="3"
+                      Background="Transparent"
+                      CornerRadius="{TemplateBinding CornerRadius}">
+                <Border.Transitions>
+                  <Transitions>
+                    <BrushTransition Property="Background" Duration="00:00:00.083"/>
+                    <TransformOperationsTransition Easing="0,0 0,1"
+                                                   Property="RenderTransform"
+                                                   Duration="00:00:00.167"/>
+                  </Transitions>
+                </Border.Transitions>
+              </Border>
+
+              <ContentPresenter Name="PART_ContentPresenter"
+                                Margin="11,5,11,6"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                HorizontalContentAlignment="Center"
+                                VerticalContentAlignment="Center"
+                                Content="{TemplateBinding Content}"
+                                FontWeight="{TemplateBinding FontWeight}"
+                                Foreground="{TemplateBinding Foreground}"/>
+
+              <Rectangle Name="Pill"
+                         Width="4"
+                         Height="3"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Bottom"
+                         Fill="{DynamicResource AccentFillColorDefaultBrush}"
+                         Opacity="0"
+                         RadiusX="0.5"
+                         RadiusY="1"
+                         RenderTransform="scaleX(4)">
+                <Rectangle.Transitions>
+                  <Transitions>
+                    <TransformOperationsTransition Easing="0,0 0,1"
+                                                   Property="RenderTransform"
+                                                   Duration="00:00:00.167"/>
+                  </Transitions>
+                </Rectangle.Transitions>
+              </Rectangle>
+            </Panel>
+          </Border>
+        </ControlTemplate>
+      </Setter>
+
+      <Style Selector="^:pointerover">
+        <Style Selector="^ /template/ Border#Hover">
+          <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}"/>
+        </Style>
+      </Style>
+
+      <Style Selector="^:pressed">
+        <Style Selector="^ /template/ Border#Hover">
+          <Setter Property="Background" Value="{DynamicResource SubtleFillColorTertiaryBrush}"/>
+          <Setter Property="RenderTransform" Value="scale(0.96)"/>
+        </Style>
+        <Style Selector="^ /template/ ContentPresenter#PART_ContentPresenter">
+          <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Style>
+      </Style>
+
+      <Style Selector="^:selected">
+        <Style Selector="^ /template/ Border#Hover">
+          <Setter Property="IsVisible" Value="False"/>
+        </Style>
+        <Style Selector="^ /template/ Border#Root">
+          <Setter Property="Background" Value="{DynamicResource ControlFillColorDefaultBrush}"/>
+          <Setter Property="BorderBrush" Value="{DynamicResource ControlElevationBorderBrush}"/>
+        </Style>
+        <Style Selector="^ /template/ ContentPresenter#PART_ContentPresenter">
+          <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+        </Style>
+        <Style Selector="^ /template/ Rectangle#Pill">
+          <Setter Property="Opacity" Value="1"/>
+        </Style>
+
+        <Style Selector="^:pressed /template/ Rectangle#Pill">
+          <Setter Property="RenderTransform" Value="scaleX(1)"/>
+        </Style>
+      </Style>
+
+      <Style Selector="^:disabled">
+        <Style Selector="^ /template/ Border#Hover">
+          <Setter Property="IsVisible" Value="False"/>
+        </Style>
+        <Style Selector="^ /template/ Border#Root">
+          <Setter Property="Background" Value="{DynamicResource ControlFillColorDisabledBrush}"/>
+          <Setter Property="BorderBrush" Value="{DynamicResource ControlAltFillColorSecondaryBrush}"/>
+        </Style>
+        <Style Selector="^ /template/ ContentPresenter#PART_ContentPresenter">
+          <Setter Property="Foreground" Value="{DynamicResource TextFillColorDisabledBrush}"/>
+        </Style>
+      </Style>
+    </ControlTheme>
+      </Styles.Resources>
+    </Styles>
   </UserControl.Styles>
 
-  <ScrollViewer>
+  <Grid RowDefinitions="Auto,*">
+    <TabStrip Name="SettingsTabStrip"
+              Grid.Row="0"
+              Theme="{StaticResource SettingsTabStripTheme}"
+              ItemContainerTheme="{StaticResource SettingsTabItemTheme}"
+              Margin="0,8,20,0"
+              HorizontalAlignment="Right">
+      <TabStripItem Content="{DynamicResource Settings.Section.Kernel}" Tag="SectionKernel"/>
+      <TabStripItem Content="{DynamicResource Settings.Section.General}" Tag="SectionGeneral"/>
+      <TabStripItem Content="{DynamicResource Settings.Section.Update}" Tag="SectionUpdate"/>
+      <TabStripItem Content="{DynamicResource Settings.Section.Data}" Tag="SectionData"/>
+      <TabStripItem Content="{DynamicResource Settings.Section.About}" Tag="SectionAbout"/>
+    </TabStrip>
+
+    <ScrollViewer Grid.Row="1" Name="SettingsScrollViewer">
     <StackPanel Margin="20" Spacing="8">
+      <StackPanel x:Name="SectionKernel">
       <TextBlock Classes="settingsSectionTitle" Text="{DynamicResource Settings.Section.Kernel}"/>
 
       <StackPanel Spacing="6">
@@ -200,7 +376,9 @@
           </StackPanel>
         </Border>
       </StackPanel>
+      </StackPanel>
 
+      <StackPanel x:Name="SectionGeneral">
       <TextBlock Classes="settingsSectionTitle" Text="{DynamicResource Settings.Section.General}"/>
 
       <StackPanel Spacing="6">
@@ -409,7 +587,9 @@
                    IsVisible="{Binding HasLoopbackStatus}"
                    Margin="16,4"/>
       </StackPanel>
+      </StackPanel>
 
+      <StackPanel x:Name="SectionUpdate">
       <TextBlock Classes="settingsSectionTitle" Text="{DynamicResource Settings.Section.Update}"/>
 
       <StackPanel Spacing="6">
@@ -479,7 +659,9 @@
                    IsVisible="{Binding AppUpdate.ShouldShowAppUpdateStatus}"
                    Margin="16,4"/>
       </StackPanel>
+      </StackPanel>
 
+      <StackPanel x:Name="SectionData">
       <TextBlock Classes="settingsSectionTitle" Text="{DynamicResource Settings.Section.Data}"/>
 
       <StackPanel Spacing="6">
@@ -545,7 +727,9 @@
           </StackPanel>
         </Border>
       </StackPanel>
+      </StackPanel>
 
+      <StackPanel x:Name="SectionAbout">
       <TextBlock Classes="settingsSectionTitle" Text="{DynamicResource Settings.Section.About}"/>
 
       <StackPanel Spacing="6" Margin="0,0,0,12">
@@ -569,7 +753,9 @@
           </StackPanel>
         </Border>
       </StackPanel>
+      </StackPanel>
     </StackPanel>
-  </ScrollViewer>
+    </ScrollViewer>
+  </Grid>
 
 </UserControl>
