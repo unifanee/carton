@@ -1472,15 +1472,15 @@ public partial class DashboardViewModel : PageViewModelBase
     {
         try
         {
-            var response = await _clashHttpClient.GetAsync("configs");
+            using var response = await _clashHttpClient.GetAsync("configs", HttpCompletionOption.ResponseHeadersRead);
             if (!response.IsSuccessStatusCode)
             {
                 LogError($"Failed to fetch Clash config: {response.StatusCode}");
                 return null;
             }
 
-            var payload = await response.Content.ReadAsStringAsync();
-            var config = JsonSerializer.Deserialize(payload, CartonGuiJsonContext.Default.ClashConfigSnapshot);
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            var config = await JsonSerializer.DeserializeAsync(stream, CartonGuiJsonContext.Default.ClashConfigSnapshot);
             _clashConfigCache.Update(config);
             return config;
         }

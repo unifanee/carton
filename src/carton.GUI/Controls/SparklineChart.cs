@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Threading;
 
 namespace carton.Controls;
 
@@ -41,6 +42,7 @@ public class SparklineChart : Control
     private Pen? _gridPen;
     private Size _cachedSize;
     private bool _isGeometryDirty = true;
+    private bool _isGeometryInvalidationQueued;
     private static readonly ConditionalWeakTable<ISolidColorBrush, Dictionary<int, SolidColorBrush>> FillBrushCache = new();
     private static readonly object FillBrushCacheLock = new();
 
@@ -248,13 +250,29 @@ public class SparklineChart : Control
 
     private void OnSamplesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        InvalidateGeometry();
+        QueueGeometryInvalidation();
     }
 
     private void InvalidateGeometry()
     {
         _isGeometryDirty = true;
         InvalidateVisual();
+    }
+
+    private void QueueGeometryInvalidation()
+    {
+        _isGeometryDirty = true;
+        if (_isGeometryInvalidationQueued)
+        {
+            return;
+        }
+
+        _isGeometryInvalidationQueued = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _isGeometryInvalidationQueued = false;
+            InvalidateVisual();
+        }, DispatcherPriority.Render);
     }
 
     private static IBrush GetAdjustedFillBrush(IBrush brush, double opacity)

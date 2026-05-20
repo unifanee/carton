@@ -17,8 +17,10 @@ public partial class SingBoxManager
     {
         try
         {
-            var response = await _httpClient.GetStringAsync($"{_apiAddress}/proxies");
-            using var document = JsonDocument.Parse(response);
+            using var response = await _httpClient.GetAsync($"{_apiAddress}/proxies", HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var document = await JsonDocument.ParseAsync(stream);
             var groups = new List<OutboundGroup>();
 
             if (document.RootElement.TryGetProperty("proxies", out var proxiesElement) &&
@@ -120,8 +122,8 @@ public partial class SingBoxManager
                 return result;
             }
 
-            var payload = await response.Content.ReadAsStringAsync();
-            using var document = JsonDocument.Parse(payload);
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var document = await JsonDocument.ParseAsync(stream);
 
             foreach (var property in document.RootElement.EnumerateObject())
             {
@@ -194,8 +196,8 @@ public partial class SingBoxManager
                 return -1;
             }
 
-            var payload = await response.Content.ReadAsStringAsync();
-            using var document = JsonDocument.Parse(payload);
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var document = await JsonDocument.ParseAsync(stream);
             if (document.RootElement.TryGetProperty("delay", out var delayElement) &&
                 delayElement.ValueKind == JsonValueKind.Number &&
                 delayElement.TryGetInt32(out var delay))
@@ -214,9 +216,11 @@ public partial class SingBoxManager
     {
         try
         {
-            var response = await _httpClient.GetStringAsync($"{_apiAddress}/connections");
             var connections = new List<ConnectionInfo>();
-            using var document = JsonDocument.Parse(response);
+            using var response = await _httpClient.GetAsync($"{_apiAddress}/connections", HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var document = await JsonDocument.ParseAsync(stream);
 
             if (!document.RootElement.TryGetProperty("connections", out var connectionsElement) ||
                 connectionsElement.ValueKind != JsonValueKind.Array)

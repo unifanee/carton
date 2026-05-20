@@ -110,7 +110,6 @@ public partial class LogsView : UserControl
         if (_isViewActive)
         {
             AttachViewModel(DataContext as LogsViewModel);
-            _logRefreshTimer.Start();
             RequestScrollToBottom();
             return;
         }
@@ -154,6 +153,10 @@ public partial class LogsView : UserControl
         if (_autoScrollToBottom)
         {
             _hasPendingLogRefresh = true;
+            if (_isViewActive && !_logRefreshTimer.IsEnabled)
+            {
+                _logRefreshTimer.Start();
+            }
         }
     }
 
@@ -161,6 +164,7 @@ public partial class LogsView : UserControl
     {
         if (!_hasPendingLogRefresh)
         {
+            _logRefreshTimer.Stop();
             return;
         }
 
@@ -168,6 +172,11 @@ public partial class LogsView : UserControl
         if (_autoScrollToBottom)
         {
             RequestScrollToBottom();
+        }
+
+        if (!_hasPendingLogRefresh)
+        {
+            _logRefreshTimer.Stop();
         }
     }
 
