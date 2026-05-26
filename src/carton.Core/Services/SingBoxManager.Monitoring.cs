@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Text;
 using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text.Json;
@@ -9,9 +10,6 @@ namespace carton.Core.Services;
 
 public partial class SingBoxManager
 {
-    private static readonly string[] TrafficUplinkPropertyNames = ["uplink", "up", "upload"];
-    private static readonly string[] TrafficDownlinkPropertyNames = ["downlink", "down", "download"];
-    private static readonly string[] MemoryPropertyNames = ["inuse", "inUse", "memory", "value"];
     private const int MessageBufferTrimThreshold = 64 * 1024;
     private const int MessageBufferInitialCapacity = 4 * 1024;
     private const int MaxMonitorMessageBytes = 64 * 1024;
@@ -309,14 +307,21 @@ public partial class SingBoxManager
 
         try
         {
-            using var document = JsonDocument.Parse(payload);
-            var root = document.RootElement;
-            var uplink = ReadTrafficValue(root, TrafficUplinkPropertyNames);
-            var downlink = ReadTrafficValue(root, TrafficDownlinkPropertyNames);
+            var reader = new Utf8JsonReader(payload.Span);
+            long? rootUplink = null;
+            long? rootDownlink = null;
+            long? nowUplink = null;
+            long? nowDownlink = null;
+
+            if (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
+            {
+                ReadTrafficObject(ref reader, out rootUplink, out rootDownlink, out nowUplink, out nowDownlink);
+            }
+
             return new TrafficInfo
             {
-                Uplink = uplink,
-                Downlink = downlink
+                Uplink = rootUplink ?? nowUplink ?? 0,
+                Downlink = rootDownlink ?? nowDownlink ?? 0
             };
         }
         catch (JsonException ex)
@@ -335,21 +340,16 @@ public partial class SingBoxManager
 
         try
         {
-            using var document = JsonDocument.Parse(payload);
-            var root = document.RootElement;
-            if (TryReadTrafficValue(root, MemoryPropertyNames, out var value))
+            var reader = new Utf8JsonReader(payload.Span);
+            long? rootMemory = null;
+            long? nowMemory = null;
+
+            if (reader.Read() && reader.TokenType == JsonTokenType.StartObject)
             {
-                return value;
+                ReadMemoryObject(ref reader, out rootMemory, out nowMemory);
             }
 
-            if (root.ValueKind == JsonValueKind.Object &&
-                root.TryGetProperty("now", out var nowElement) &&
-                TryReadTrafficValue(nowElement, MemoryPropertyNames, out value))
-            {
-                return value;
-            }
-
-            return null;
+            return rootMemory ?? nowMemory;
         }
         catch (JsonException ex)
         {
@@ -371,50 +371,250 @@ public partial class SingBoxManager
         return true;
     }
 
-    private static long ReadTrafficValue(JsonElement root, IReadOnlyList<string> propertyNames)
+    private static void ReadTrafficObject(
+        ref Utf8JsonReader reader,
+        out long? rootUplink,
+        out long? rootDownlink,
+        out long? nowUplink,
+        out long? nowDownlink)
     {
-        if (TryReadTrafficValue(root, propertyNames, out var value))
-        {
-            return value;
-        }
+        rootUplink = null;
+        rootDownlink = null;
+        nowUplink = null;
+        nowDownlink = null;
+        var rootUplinkPriority = int.MaxValue;
+        var rootDownlinkPriority = int.MaxValue;
+        var nowUplinkPriority = int.MaxValue;
+        var nowDownlinkPriority = int.MaxValue;
 
-        if (root.ValueKind == JsonValueKind.Object &&
-            root.TryGetProperty("now", out var nowElement) &&
-            nowElement.ValueKind == JsonValueKind.Object &&
-            TryReadTrafficValue(nowElement, propertyNames, out value))
+        while (reader.Read())
         {
-            return value;
-        }
+            if (reader.TokenType == JsonTokenType.EndObject)
+            {
+                return;
+            }
 
-        return 0;
-    }
-
-    private static bool TryReadTrafficValue(JsonElement element, IReadOnlyList<string> propertyNames, out long value)
-    {
-        if (element.ValueKind != JsonValueKind.Object)
-        {
-            value = 0;
-            return false;
-        }
-
-        foreach (var name in propertyNames)
-        {
-            if (!element.TryGetProperty(name, out var property))
+            if (reader.TokenType != JsonTokenType.PropertyName)
             {
                 continue;
             }
 
-            switch (property.ValueKind)
+            var uplinkPriority = GetTrafficUplinkPriority(ref reader);
+            var downlinkPriority = GetTrafficDownlinkPriority(ref reader);
+            var isNow = reader.ValueTextEquals("now"u8);
+
+            if (!reader.Read())
             {
-                case JsonValueKind.Number when property.TryGetInt64(out var longValue):
-                    value = longValue;
-                    return true;
-                case JsonValueKind.Number when property.TryGetDouble(out var doubleValue):
-                    value = (long)doubleValue;
-                    return true;
-                case JsonValueKind.String when long.TryParse(property.GetString(), out var parsed):
-                    value = parsed;
-                    return true;
+                return;
+            }
+
+            if (uplinkPriority >= 0)
+            {
+                if (uplinkPriority < rootUplinkPriority && TryGetLongValue(ref reader, out var value))
+                {
+                    rootUplink = value;
+                    rootUplinkPriority = uplinkPriority;
+                }
+                else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+                {
+                    reader.Skip();
+                }
+            }
+            else if (downlinkPriority >= 0)
+            {
+                if (downlinkPriority < rootDownlinkPriority && TryGetLongValue(ref reader, out var value))
+                {
+                    rootDownlink = value;
+                    rootDownlinkPriority = downlinkPriority;
+                }
+                else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+                {
+                    reader.Skip();
+                }
+            }
+            else if (isNow && reader.TokenType == JsonTokenType.StartObject)
+            {
+                ReadTrafficProperties(ref reader, ref nowUplink, ref nowDownlink, ref nowUplinkPriority, ref nowDownlinkPriority);
+            }
+            else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+            {
+                reader.Skip();
+            }
+        }
+    }
+
+    private static void ReadTrafficProperties(
+        ref Utf8JsonReader reader,
+        ref long? uplink,
+        ref long? downlink,
+        ref int uplinkPriority,
+        ref int downlinkPriority)
+    {
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndObject)
+            {
+                return;
+            }
+
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                continue;
+            }
+
+            var currentUplinkPriority = GetTrafficUplinkPriority(ref reader);
+            var currentDownlinkPriority = GetTrafficDownlinkPriority(ref reader);
+            if (!reader.Read())
+            {
+                return;
+            }
+
+            if (currentUplinkPriority >= 0 && currentUplinkPriority < uplinkPriority && TryGetLongValue(ref reader, out var uplinkValue))
+            {
+                uplink = uplinkValue;
+                uplinkPriority = currentUplinkPriority;
+            }
+            else if (currentDownlinkPriority >= 0 && currentDownlinkPriority < downlinkPriority && TryGetLongValue(ref reader, out var downlinkValue))
+            {
+                downlink = downlinkValue;
+                downlinkPriority = currentDownlinkPriority;
+            }
+            else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+            {
+                reader.Skip();
+            }
+        }
+    }
+
+    private static void ReadMemoryObject(ref Utf8JsonReader reader, out long? rootMemory, out long? nowMemory)
+    {
+        rootMemory = null;
+        nowMemory = null;
+        var rootMemoryPriority = int.MaxValue;
+        var nowMemoryPriority = int.MaxValue;
+
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndObject)
+            {
+                return;
+            }
+
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                continue;
+            }
+
+            var memoryPriority = GetMemoryPriority(ref reader);
+            var isNow = reader.ValueTextEquals("now"u8);
+
+            if (!reader.Read())
+            {
+                return;
+            }
+
+            if (memoryPriority >= 0)
+            {
+                if (memoryPriority < rootMemoryPriority && TryGetLongValue(ref reader, out var value))
+                {
+                    rootMemory = value;
+                    rootMemoryPriority = memoryPriority;
+                }
+                else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+                {
+                    reader.Skip();
+                }
+            }
+            else if (isNow && reader.TokenType == JsonTokenType.StartObject)
+            {
+                ReadMemoryProperties(ref reader, ref nowMemory, ref nowMemoryPriority);
+            }
+            else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+            {
+                reader.Skip();
+            }
+        }
+    }
+
+    private static void ReadMemoryProperties(ref Utf8JsonReader reader, ref long? memory, ref int memoryPriority)
+    {
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndObject)
+            {
+                return;
+            }
+
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                continue;
+            }
+
+            var currentMemoryPriority = GetMemoryPriority(ref reader);
+            if (!reader.Read())
+            {
+                return;
+            }
+
+            if (currentMemoryPriority >= 0 && currentMemoryPriority < memoryPriority && TryGetLongValue(ref reader, out var value))
+            {
+                memory = value;
+                memoryPriority = currentMemoryPriority;
+            }
+            else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+            {
+                reader.Skip();
+            }
+        }
+    }
+
+    private static int GetTrafficUplinkPriority(ref Utf8JsonReader reader)
+    {
+        if (reader.ValueTextEquals("uplink"u8)) return 0;
+        if (reader.ValueTextEquals("up"u8)) return 1;
+        if (reader.ValueTextEquals("upload"u8)) return 2;
+        return -1;
+    }
+
+    private static int GetTrafficDownlinkPriority(ref Utf8JsonReader reader)
+    {
+        if (reader.ValueTextEquals("downlink"u8)) return 0;
+        if (reader.ValueTextEquals("down"u8)) return 1;
+        if (reader.ValueTextEquals("download"u8)) return 2;
+        return -1;
+    }
+
+    private static int GetMemoryPriority(ref Utf8JsonReader reader)
+    {
+        if (reader.ValueTextEquals("inuse"u8)) return 0;
+        if (reader.ValueTextEquals("inUse"u8)) return 1;
+        if (reader.ValueTextEquals("memory"u8)) return 2;
+        if (reader.ValueTextEquals("value"u8)) return 3;
+        return -1;
+    }
+
+    private static bool TryGetLongValue(ref Utf8JsonReader reader, out long value)
+    {
+        if (reader.TokenType == JsonTokenType.Number)
+        {
+            if (reader.TryGetInt64(out value))
+            {
+                return true;
+            }
+
+            if (reader.TryGetDouble(out var doubleValue))
+            {
+                value = (long)doubleValue;
+                return true;
+            }
+        }
+        else if (reader.TokenType == JsonTokenType.String)
+        {
+            var span = reader.ValueSpan;
+            if (Utf8Parser.TryParse(span, out long parsed, out var consumed) && consumed == span.Length)
+            {
+                value = parsed;
+                return true;
             }
         }
 
