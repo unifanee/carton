@@ -33,6 +33,10 @@ public sealed class JsonConfigEditor : Grid
 
     private const int MaxHistoryEntries = 200;
 
+    // 撤销/重做快照保存全文副本。除条数上限外再加字符总量上限，
+    // 防止大配置反复编辑时累积数百 MB 字符串触发 GC 卡顿。
+    private const long MaxHistoryChars = 32L * 1024 * 1024;
+
     private readonly EditorSurface _surface;
     private readonly ScrollBar _horizontalScrollBar;
     private readonly ScrollBar _verticalScrollBar;
@@ -236,16 +240,23 @@ public sealed class JsonConfigEditor : Grid
         base.OnPropertyChanged(change);
         if (change.Property == TextProperty)
         {
-            if (!_isInternalTextMutation)
+            var isExternalChange = !_isInternalTextMutation;
+            if (isExternalChange)
             {
                 ClearHistory();
                 ResetSearchForNewText();
             }
 
             _surface.OnTextChanged();
-            UpdateSearchResults(selectCurrentMatch: false);
-            UpdateScrollBars();
-            RaiseEditorStateChanged();
+
+            // 内部编辑/撤销/重做由各自的调用方（SetTextInternal、Undo、Redo）刷新搜索与滚动条，
+            // 这里只处理外部赋值（如加载配置），避免每次按键重复全文扫描。
+            if (isExternalChange)
+            {
+                UpdateSearchResults(selectCurrentMatch: false);
+                UpdateScrollBars();
+                RaiseEditorStateChanged();
+            }
         }
     }
 
@@ -388,12 +399,36 @@ public sealed class JsonConfigEditor : Grid
     {
         if (stack.Count <= MaxHistoryEntries)
         {
-            return;
+            // 条数未超限时，仍需检查字符总量是否超出预算。
+            var totalChars = 0L;
+            foreach (var snapshot in stack)
+            {
+                totalChars += snapshot.Text.Length;
+            }
+
+            if (totalChars <= MaxHistoryChars)
+            {
+                return;
+            }
         }
 
         var snapshots = stack.ToArray();
         stack.Clear();
-        for (var i = MaxHistoryEntries - 1; i >= 0; i--)
+        var keptChars = 0L;
+        var kept = 0;
+        // snapshots[0] 是栈顶（最新），保留最新的若干条直到触及条数或字符预算。
+        for (var i = 0; i < snapshots.Length && kept < MaxHistoryEntries; i++)
+        {
+            keptChars += snapshots[i].Text.Length;
+            if (kept > 0 && keptChars > MaxHistoryChars)
+            {
+                break;
+            }
+
+            kept++;
+        }
+
+        for (var i = kept - 1; i >= 0; i--)
         {
             stack.Push(snapshots[i]);
         }
@@ -751,6 +786,15 @@ public sealed class JsonConfigEditor : Grid
             }
 
             EnsureMetrics();
+            if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+            {
+                // 鼠标滚轮只产生竖直 delta，按住 Shift 时将其映射为水平滚动。
+                var delta = Math.Abs(e.Delta.X) > double.Epsilon ? e.Delta.X : e.Delta.Y;
+                _owner.ScrollSurfaceBy(new Vector(-delta * _charWidth * 3, 0));
+                e.Handled = true;
+                return;
+            }
+
             _owner.ScrollSurfaceBy(new Vector(
                 -e.Delta.X * _charWidth * 3,
                 -e.Delta.Y * _lineHeight * 3));
@@ -1038,6 +1082,7 @@ public sealed class JsonConfigEditor : Grid
             EnsureCaretVisible();
             _owner.UpdateScrollBars();
             _owner.UpdateSearchResults(selectCurrentMatch: false);
+            _owner.RaiseEditorStateChanged();
             InvalidateVisual();
         }
 
