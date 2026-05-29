@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -47,6 +48,7 @@ public sealed class JsonConfigEditor : Grid
     private bool _searchUseRegex;
     private bool _searchPatternValid = true;
     private bool _isSearchOpen;
+    private CancellationTokenSource? _searchDebounceTokenSource;
 
     public JsonConfigEditor()
     {
@@ -179,8 +181,32 @@ public sealed class JsonConfigEditor : Grid
     public void SetSearchQuery(string query)
     {
         _searchQuery = query ?? string.Empty;
-        UpdateSearchResults(selectCurrentMatch: true);
-        RaiseEditorStateChanged();
+        _searchDebounceTokenSource?.Cancel();
+        _searchDebounceTokenSource = new CancellationTokenSource();
+        var token = _searchDebounceTokenSource.Token;
+        _ = DebounceSearchAsync(token);
+    }
+
+    private async Task DebounceSearchAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(150, token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        if (!token.IsCancellationRequested)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (token.IsCancellationRequested) return;
+                UpdateSearchResults(selectCurrentMatch: true);
+                RaiseEditorStateChanged();
+            });
+        }
     }
 
     public void FindNext()
@@ -500,6 +526,9 @@ public sealed class JsonConfigEditor : Grid
         private const double MinFontSize = 10;
         private const double MaxFontSize = 24;
         private const double FontSizeStep = 1;
+        private const int BackgroundTokenizeThreshold = 50_000;
+        private const int LineSliceThreshold = 2000;
+        private const int LineSliceOverscan = 50;
 
         private readonly JsonConfigEditor _owner;
         private readonly List<LineInfo> _lines = new();
@@ -507,6 +536,7 @@ public sealed class JsonConfigEditor : Grid
         private FormattedText? _sampleFormattedText;
         private double _charWidth = 8;
         private double _lineHeight = 18;
+        private double _baseline = 14;
         private int _caretIndex;
         private int _selectionAnchor = -1;
         private bool _pointerSelecting;
@@ -514,6 +544,11 @@ public sealed class JsonConfigEditor : Grid
         private double _horizontalOffset;
         private double _verticalOffset;
         private double _fontSize = DefaultFontSize;
+        private readonly List<int> _lineFirstTokenIndex = new();
+        private FormattedText?[] _lineFormattedTextCache = Array.Empty<FormattedText?>();
+        private int _longestLineLength = 1;
+        private CancellationTokenSource? _tokenizeCts;
+        private int _tokenizeVersion;
 
         public EditorSurface(JsonConfigEditor owner)
         {
@@ -523,6 +558,7 @@ public sealed class JsonConfigEditor : Grid
             ActualThemeVariantChanged += (_, _) =>
             {
                 _sampleFormattedText = null;
+                Array.Clear(_lineFormattedTextCache);
                 InvalidateVisual();
             };
             RebuildDocumentState();
@@ -597,7 +633,8 @@ public sealed class JsonConfigEditor : Grid
         {
             EnsureMetrics();
             var targetIndex = Math.Clamp(start + Math.Max(0, length / 2), 0, Text.Length);
-            var (lineIndex, column) = GetLineAndColumn(targetIndex);
+            var (lineIndex, _) = GetLineAndColumn(targetIndex);
+            var column = OffsetToDisplayColumn(_lines[lineIndex], targetIndex);
             var lineNumberWidth = GetLineNumberColumnWidth();
             var targetX = lineNumberWidth + HorizontalPadding + column * _charWidth;
             var targetY = VerticalPadding + lineIndex * _lineHeight;
@@ -627,16 +664,25 @@ public sealed class JsonConfigEditor : Grid
             var bounds = Bounds;
             var lineNumberWidth = GetLineNumberColumnWidth();
             context.FillRectangle(GetBackgroundBrush(), bounds);
-            context.FillRectangle(GetLineNumberBackgroundBrush(), new Rect(0, 0, lineNumberWidth, bounds.Height));
 
-            DrawSearchMatches(context, lineNumberWidth);
-            DrawSelection(context, lineNumberWidth);
-            DrawText(context, lineNumberWidth);
-            DrawLineNumbers(context, lineNumberWidth);
-            if (IsFocused)
+            var contentRect = new Rect(
+                lineNumberWidth,
+                0,
+                Math.Max(0, bounds.Width - lineNumberWidth),
+                bounds.Height);
+            using (context.PushClip(contentRect))
             {
-                DrawCaret(context, lineNumberWidth);
+                DrawSearchMatches(context, lineNumberWidth);
+                DrawSelection(context, lineNumberWidth);
+                DrawText(context, lineNumberWidth);
+                if (IsFocused)
+                {
+                    DrawCaret(context, lineNumberWidth);
+                }
             }
+
+            context.FillRectangle(GetLineNumberBackgroundBrush(), new Rect(0, 0, lineNumberWidth, bounds.Height));
+            DrawLineNumbers(context, lineNumberWidth);
         }
 
         public void SetFontSize(double fontSize)
@@ -1031,15 +1077,104 @@ public sealed class JsonConfigEditor : Grid
                 GetTextBrush());
             _charWidth = Math.Max(1, _sampleFormattedText.WidthIncludingTrailingWhitespace);
             _lineHeight = Math.Max(1, _sampleFormattedText.Height + 2);
+            _baseline = _sampleFormattedText.Baseline;
         }
 
         private void RebuildDocumentState()
         {
             EnsureMetrics();
             BuildLines();
-            BuildTokens();
+
+            _tokenizeCts?.Cancel();
+            var version = ++_tokenizeVersion;
+
+            if (Text.Length >= BackgroundTokenizeThreshold)
+            {
+                _tokens.Clear();
+                BuildLineTokenIndex();
+                StartBackgroundTokenize(Text, version);
+            }
+            else
+            {
+                BuildTokens();
+                BuildLineTokenIndex();
+            }
+
             _selectionAnchor = Math.Clamp(_selectionAnchor < 0 ? _caretIndex : _selectionAnchor, 0, Text.Length);
             _caretIndex = Math.Clamp(_caretIndex, 0, Text.Length);
+        }
+
+        private void StartBackgroundTokenize(string text, int version)
+        {
+            var cts = new CancellationTokenSource();
+            _tokenizeCts = cts;
+            var token = cts.Token;
+
+            Task.Run(() =>
+            {
+                var tokens = new List<Token>(Math.Max(64, text.Length / 16));
+                BuildTokensInto(text, tokens, token);
+                if (token.IsCancellationRequested) return;
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (version != _tokenizeVersion) return;
+                    _tokens.Clear();
+                    _tokens.AddRange(tokens);
+                    BuildLineTokenIndex();
+                    Array.Clear(_lineFormattedTextCache);
+                    InvalidateVisual();
+                });
+            }, token);
+        }
+
+        private static void BuildTokensInto(string text, List<Token> tokens, CancellationToken cancellation)
+        {
+            var index = 0;
+            var checkpoint = 0;
+            while (index < text.Length)
+            {
+                if (index - checkpoint >= 65_536)
+                {
+                    if (cancellation.IsCancellationRequested) return;
+                    checkpoint = index;
+                }
+
+                var ch = text[index];
+                if (ch == '"')
+                {
+                    var start = index;
+                    index = ReadJsonString(text, index + 1);
+                    tokens.Add(new Token(start, index - start, IsLikelyPropertyName(text, index) ? TokenKind.Property : TokenKind.String));
+                    continue;
+                }
+
+                if (char.IsDigit(ch) || ch == '-')
+                {
+                    var start = index++;
+                    while (index < text.Length && IsNumberChar(text[index]))
+                    {
+                        index++;
+                    }
+
+                    tokens.Add(new Token(start, index - start, TokenKind.Number));
+                    continue;
+                }
+
+                if (TryReadKeyword(text, index, out var keywordLength))
+                {
+                    tokens.Add(new Token(index, keywordLength, TokenKind.Keyword));
+                    index += keywordLength;
+                    continue;
+                }
+
+                if (ch is '{' or '}' or '[' or ']' or ':' or ',')
+                {
+                    tokens.Add(new Token(index, 1, TokenKind.Punctuation));
+                }
+
+                index++;
+            }
         }
 
         private void BuildLines()
@@ -1047,17 +1182,43 @@ public sealed class JsonConfigEditor : Grid
             _lines.Clear();
             var text = Text;
             var start = 0;
+            var longest = 1;
+            var lineColumns = 0;
             for (var i = 0; i < text.Length; i++)
             {
-                if (text[i] == '\n')
+                var ch = text[i];
+                if (ch == '\n')
                 {
                     var lineEnd = i > start && text[i - 1] == '\r' ? i - 1 : i;
                     _lines.Add(new LineInfo(start, lineEnd));
+                    if (lineColumns > longest)
+                    {
+                        longest = lineColumns;
+                    }
                     start = i + 1;
+                    lineColumns = 0;
+                }
+                else if (ch != '\r')
+                {
+                    lineColumns += IsWideChar(ch) ? 2 : 1;
                 }
             }
 
             _lines.Add(new LineInfo(start, text.Length));
+            if (lineColumns > longest)
+            {
+                longest = lineColumns;
+            }
+            _longestLineLength = longest;
+
+            if (_lineFormattedTextCache.Length != _lines.Count)
+            {
+                _lineFormattedTextCache = new FormattedText?[_lines.Count];
+            }
+            else
+            {
+                Array.Clear(_lineFormattedTextCache);
+            }
         }
 
         private void BuildTokens()
@@ -1104,45 +1265,121 @@ public sealed class JsonConfigEditor : Grid
             }
         }
 
+        private void BuildLineTokenIndex()
+        {
+            _lineFirstTokenIndex.Clear();
+            if (_lineFirstTokenIndex.Capacity < _lines.Count)
+            {
+                _lineFirstTokenIndex.Capacity = _lines.Count;
+            }
+
+            var tokenIdx = 0;
+            for (var i = 0; i < _lines.Count; i++)
+            {
+                var line = _lines[i];
+                while (tokenIdx < _tokens.Count && _tokens[tokenIdx].Start + _tokens[tokenIdx].Length <= line.StartOffset)
+                {
+                    tokenIdx++;
+                }
+                _lineFirstTokenIndex.Add(tokenIdx);
+            }
+        }
+
         private void DrawText(DrawingContext context, double lineNumberWidth)
         {
+            var text = Text;
             var lineStartX = lineNumberWidth + HorizontalPadding - HorizontalOffset;
-            var firstVisibleLine = Math.Max(0, (int)(VerticalOffset / _lineHeight));
-            var visibleLineCount = (int)Math.Ceiling(Bounds.Height / _lineHeight) + 1;
-            var lastVisibleLine = Math.Min(_lines.Count - 1, firstVisibleLine + visibleLineCount);
+            var (firstVisibleLine, lastVisibleLine) = GetVisibleLineRange();
+            var viewportStartX = lineNumberWidth + HorizontalPadding;
+            var firstVisibleCol = (int)Math.Max(0, HorizontalOffset / _charWidth) - LineSliceOverscan;
+            if (firstVisibleCol < 0) firstVisibleCol = 0;
+            var lastVisibleCol = firstVisibleCol + (int)Math.Ceiling(Bounds.Width / _charWidth) + LineSliceOverscan * 2;
 
             for (var lineIndex = firstVisibleLine; lineIndex <= lastVisibleLine; lineIndex++)
             {
                 var line = _lines[lineIndex];
                 var y = VerticalPadding + lineIndex * _lineHeight - VerticalOffset;
-                var lineText = Text[line.StartOffset..line.EndOffset];
-                if (lineText.Length == 0)
+                var lineLength = line.EndOffset - line.StartOffset;
+                if (lineLength <= 0)
                 {
                     continue;
                 }
 
-                var formatted = new FormattedText(
-                    lineText,
-                    CultureInfo.CurrentCulture,
-                    FlowDirection.LeftToRight,
-                    EditorTypeface,
-                    _fontSize,
-                    GetTextBrush());
-
-                foreach (var token in GetLineTokens(line.StartOffset, line.EndOffset))
+                if (lineLength > LineSliceThreshold)
                 {
-                    formatted.SetForegroundBrush(GetBrush(token.Kind), token.Start - line.StartOffset, token.Length);
+                    // 用显示列宽（CJK 记 2 列）定位可见切片，保持与 GetExtent 的列宽口径一致。
+                    var col = 0;
+                    var p = line.StartOffset;
+                    for (; p < line.EndOffset; p++)
+                    {
+                        var w = IsWideChar(text[p]) ? 2 : 1;
+                        if (col + w > firstVisibleCol) break;
+                        col += w;
+                    }
+
+                    var sliceStart = p;
+                    var sliceStartCol = col;
+                    for (; p < line.EndOffset && col < lastVisibleCol; p++)
+                    {
+                        col += IsWideChar(text[p]) ? 2 : 1;
+                    }
+
+                    var sliceEnd = p;
+                    if (sliceEnd <= sliceStart)
+                    {
+                        continue;
+                    }
+
+                    var sliceText = text[sliceStart..sliceEnd];
+                    var sliceFormatted = new FormattedText(
+                        sliceText,
+                        CultureInfo.CurrentCulture,
+                        FlowDirection.LeftToRight,
+                        EditorTypeface,
+                        _fontSize,
+                        GetTextBrush());
+
+                    foreach (var token in GetLineTokens(lineIndex))
+                    {
+                        var tokenEnd = token.Start + token.Length;
+                        if (tokenEnd <= sliceStart) continue;
+                        if (token.Start >= sliceEnd) break;
+                        var paintStart = Math.Max(token.Start, sliceStart) - sliceStart;
+                        var paintEnd = Math.Min(tokenEnd, sliceEnd) - sliceStart;
+                        sliceFormatted.SetForegroundBrush(GetBrush(token.Kind), paintStart, paintEnd - paintStart);
+                    }
+
+                    context.DrawText(sliceFormatted, new Point(viewportStartX + sliceStartCol * _charWidth - HorizontalOffset, y + _baseline - sliceFormatted.Baseline));
+                    continue;
                 }
 
-                context.DrawText(formatted, new Point(lineStartX, y));
+                var formatted = _lineFormattedTextCache[lineIndex];
+                if (formatted == null)
+                {
+                    var lineText = text[line.StartOffset..line.EndOffset];
+                    formatted = new FormattedText(
+                        lineText,
+                        CultureInfo.CurrentCulture,
+                        FlowDirection.LeftToRight,
+                        EditorTypeface,
+                        _fontSize,
+                        GetTextBrush());
+
+                    foreach (var token in GetLineTokens(lineIndex))
+                    {
+                        formatted.SetForegroundBrush(GetBrush(token.Kind), token.Start - line.StartOffset, token.Length);
+                    }
+
+                    _lineFormattedTextCache[lineIndex] = formatted;
+                }
+
+                context.DrawText(formatted, new Point(lineStartX, y + _baseline - formatted.Baseline));
             }
         }
 
         private void DrawLineNumbers(DrawingContext context, double lineNumberWidth)
         {
-            var firstVisibleLine = Math.Max(0, (int)(VerticalOffset / _lineHeight));
-            var visibleLineCount = (int)Math.Ceiling(Bounds.Height / _lineHeight) + 1;
-            var lastVisibleLine = Math.Min(_lines.Count - 1, firstVisibleLine + visibleLineCount);
+            var (firstVisibleLine, lastVisibleLine) = GetVisibleLineRange();
             var digits = _lines.Count.ToString().Length;
 
             for (var lineIndex = firstVisibleLine; lineIndex <= lastVisibleLine; lineIndex++)
@@ -1167,9 +1404,32 @@ public sealed class JsonConfigEditor : Grid
 
         private void DrawSearchMatches(DrawingContext context, double lineNumberWidth)
         {
+            if (_owner._searchMatches.Count == 0 || _lines.Count == 0)
+            {
+                return;
+            }
+
+            var (firstVisibleLine, lastVisibleLine) = GetVisibleLineRange();
+            if (lastVisibleLine < firstVisibleLine)
+            {
+                return;
+            }
+
+            var visibleStart = _lines[firstVisibleLine].StartOffset;
+            var visibleEnd = _lines[lastVisibleLine].EndOffset;
+
             for (var i = 0; i < _owner._searchMatches.Count; i++)
             {
                 var match = _owner._searchMatches[i];
+                if (match.Start >= visibleEnd)
+                {
+                    break;
+                }
+                if (match.Start + match.Length <= visibleStart)
+                {
+                    continue;
+                }
+
                 var isCurrent = i == _owner._currentSearchMatchIndex;
                 var brush = isCurrent ? GetCurrentSearchBrush() : GetSearchBrush();
                 DrawTextRangeHighlight(
@@ -1204,10 +1464,20 @@ public sealed class JsonConfigEditor : Grid
             IPen? pen)
         {
             var lineStartX = lineNumberWidth + HorizontalPadding - HorizontalOffset;
+            var (firstVisibleLine, lastVisibleLine) = GetVisibleLineRange();
 
-            for (var lineIndex = 0; lineIndex < _lines.Count; lineIndex++)
+            for (var lineIndex = firstVisibleLine; lineIndex <= lastVisibleLine; lineIndex++)
             {
                 var line = _lines[lineIndex];
+                if (line.StartOffset >= end)
+                {
+                    break;
+                }
+                if (line.EndOffset < start)
+                {
+                    continue;
+                }
+
                 var segmentStart = Math.Max(start, line.StartOffset);
                 var segmentEnd = Math.Min(end, line.EndOffset);
                 if (segmentEnd < segmentStart)
@@ -1215,8 +1485,8 @@ public sealed class JsonConfigEditor : Grid
                     continue;
                 }
 
-                var startColumn = segmentStart - line.StartOffset;
-                var endColumn = segmentEnd - line.StartOffset;
+                var startColumn = OffsetToDisplayColumn(line, segmentStart);
+                var endColumn = OffsetToDisplayColumn(line, segmentEnd);
                 if (segmentStart == segmentEnd && segmentEnd != end)
                 {
                     endColumn++;
@@ -1237,7 +1507,8 @@ public sealed class JsonConfigEditor : Grid
 
         private void DrawCaret(DrawingContext context, double lineNumberWidth)
         {
-            var (lineIndex, column) = GetLineAndColumn(_caretIndex);
+            var (lineIndex, _) = GetLineAndColumn(_caretIndex);
+            var column = OffsetToDisplayColumn(_lines[lineIndex], _caretIndex);
             var x = lineNumberWidth + HorizontalPadding + column * _charWidth - HorizontalOffset;
             var y = VerticalPadding + lineIndex * _lineHeight - VerticalOffset;
             context.FillRectangle(GetCaretBrush(), new Rect(x, y, 1.5, _lineHeight));
@@ -1246,7 +1517,8 @@ public sealed class JsonConfigEditor : Grid
         private void EnsureCaretVisible()
         {
             var lineNumberWidth = GetLineNumberColumnWidth();
-            var (lineIndex, column) = GetLineAndColumn(_caretIndex);
+            var (lineIndex, _) = GetLineAndColumn(_caretIndex);
+            var column = OffsetToDisplayColumn(_lines[lineIndex], _caretIndex);
             var caretX = lineNumberWidth + HorizontalPadding + column * _charWidth;
             var caretY = VerticalPadding + lineIndex * _lineHeight;
 
@@ -1275,9 +1547,8 @@ public sealed class JsonConfigEditor : Grid
             var x = Math.Max(0, point.X + HorizontalOffset - lineNumberWidth - HorizontalPadding);
             var y = Math.Max(0, point.Y + VerticalOffset - VerticalPadding);
             var lineIndex = Math.Clamp((int)(y / _lineHeight), 0, _lines.Count - 1);
-            var column = Math.Max(0, (int)Math.Round(x / _charWidth, MidpointRounding.AwayFromZero));
-            var line = _lines[lineIndex];
-            return Math.Min(line.EndOffset, line.StartOffset + column);
+            var targetColumn = Math.Max(0, (int)Math.Round(x / _charWidth, MidpointRounding.AwayFromZero));
+            return DisplayColumnToOffset(_lines[lineIndex], targetColumn);
         }
 
         private (int LineIndex, int Column) GetLineAndColumn(int index)
@@ -1295,17 +1566,49 @@ public sealed class JsonConfigEditor : Grid
             return (_lines.Count - 1, Math.Max(0, last.EndOffset - last.StartOffset));
         }
 
-        private IEnumerable<Token> GetLineTokens(int start, int end)
+        // 将字符偏移换算成显示列（CJK/全角记 2 列），与渲染、extent 的列宽口径一致。
+        private int OffsetToDisplayColumn(LineInfo line, int offset)
         {
-            foreach (var token in _tokens)
+            var text = Text;
+            var end = Math.Clamp(offset, line.StartOffset, line.EndOffset);
+            var columns = 0;
+            for (var i = line.StartOffset; i < end; i++)
             {
-                var tokenEnd = token.Start + token.Length;
-                if (tokenEnd <= start)
+                columns += IsWideChar(text[i]) ? 2 : 1;
+            }
+
+            return columns;
+        }
+
+        // 将显示列换算回字符偏移，落在宽字符中间时就近吸附到字符边界。
+        private int DisplayColumnToOffset(LineInfo line, int targetColumn)
+        {
+            var text = Text;
+            var columns = 0;
+            for (var i = line.StartOffset; i < line.EndOffset; i++)
+            {
+                var w = IsWideChar(text[i]) ? 2 : 1;
+                if (columns + w > targetColumn)
                 {
-                    continue;
+                    var distToStart = targetColumn - columns;
+                    var distToEnd = columns + w - targetColumn;
+                    return distToEnd < distToStart ? i + 1 : i;
                 }
 
-                if (token.Start >= end)
+                columns += w;
+            }
+
+            return line.EndOffset;
+        }
+
+        private IEnumerable<Token> GetLineTokens(int lineIndex)
+        {
+            var endOffset = _lines[lineIndex].EndOffset;
+            var startIdx = _lineFirstTokenIndex[lineIndex];
+            for (var i = startIdx; i < _tokens.Count; i++)
+            {
+                var token = _tokens[i];
+                if (token.Start >= endOffset)
                 {
                     yield break;
                 }
@@ -1323,13 +1626,33 @@ public sealed class JsonConfigEditor : Grid
 
         private int GetLongestLineLength()
         {
-            var max = 1;
-            foreach (var line in _lines)
+            return _longestLineLength;
+        }
+
+        private static bool IsWideChar(char ch)
+        {
+            // CJK 及常见全角字符在等宽字体下约占两个西文字符宽度。
+            return ch >= 0x1100 &&
+                   (ch <= 0x115F ||                       // Hangul Jamo
+                    ch is >= (char)0x2E80 and <= (char)0xA4CF ||   // CJK 部首、假名、CJK 统一表意文字等
+                    ch is >= (char)0xAC00 and <= (char)0xD7A3 ||   // Hangul 音节
+                    ch is >= (char)0xF900 and <= (char)0xFAFF ||   // CJK 兼容表意
+                    ch is >= (char)0xFE30 and <= (char)0xFE4F ||   // CJK 兼容形式
+                    ch is >= (char)0xFF00 and <= (char)0xFF60 ||   // 全角 ASCII
+                    ch is >= (char)0xFFE0 and <= (char)0xFFE6);    // 全角符号
+        }
+
+        private (int FirstVisibleLine, int LastVisibleLine) GetVisibleLineRange()
+        {
+            if (_lines.Count == 0)
             {
-                max = Math.Max(max, line.EndOffset - line.StartOffset);
+                return (0, -1);
             }
 
-            return max;
+            var firstVisibleLine = Math.Max(0, (int)(VerticalOffset / _lineHeight));
+            var visibleLineCount = (int)Math.Ceiling(Bounds.Height / _lineHeight) + 1;
+            var lastVisibleLine = Math.Min(_lines.Count - 1, firstVisibleLine + visibleLineCount);
+            return (firstVisibleLine, lastVisibleLine);
         }
 
         private static int ReadJsonString(string text, int index)
